@@ -1,6 +1,6 @@
 # 🤖 EchoBot — Plataforma SaaS de Automação para Instagram
 
-Plataforma SaaS web (PWA) de automação para o Instagram estilo **Manychat**, focada em disparar mensagens automáticas no Direct (DM) e responder publicamente quando seguidores comentam palavras-chave específicas nas publicações dos utilizadores (influenciadores).
+Plataforma SaaS web (PWA) de automação para o Instagram, focada em disparar mensagens automáticas no Direct (DM) e responder publicamente quando seguidores comentam palavras-chave específicas nas publicações dos utilizadores (influenciadores).
 
 ---
 
