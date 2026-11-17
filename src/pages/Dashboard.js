@@ -13,6 +13,7 @@ import {
   FaUsers,
   FaBullhorn,
   FaUnlink,
+  FaLink,
 } from 'react-icons/fa';
 import { httpsCallable } from 'firebase/functions';
 import { useAuth } from '../context/AuthContext';
@@ -20,6 +21,7 @@ import { functions } from '../firebase';
 import CampaignList from '../components/CampaignList';
 import CampaignModal from '../components/CampaignModal';
 import StatsCard from '../components/StatsCard';
+import AffiliateHub from '../components/AffiliateHub';
 
 const META_APP_ID = '2571540876656566';
 const META_CONFIG_ID = '4750108781977729';
@@ -50,6 +52,7 @@ function createMetaLoginUrl() {
 export default function Dashboard() {
   const { user, userData, logout, refreshUserData } = useAuth();
   const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState('campaigns');
   const [showModal, setShowModal] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState(null);
   const [totalDms, setTotalDms] = useState(0);
@@ -153,123 +156,148 @@ export default function Dashboard() {
       {/* Main content */}
       <main className="dashboard-main">
         <div className="dashboard-content">
-
-          {/* Page title */}
-          <div className="page-header">
-            <div>
-              <h1 className="page-title">Dashboard</h1>
-              <p className="page-subtitle">
-                Gerencie suas campanhas de DM e acompanhe os resultados.
-              </p>
-            </div>
-            <button className="btn-primary" onClick={handleNewCampaign}>
-              <FaPlus size={14} />
-              Nova Campanha
+          {/* Main Navigation Tabs */}
+          <div className="dashboard-nav-tabs">
+            <button
+              className={`dashboard-nav-tab ${activeTab === 'campaigns' ? 'active' : ''}`}
+              onClick={() => setActiveTab('campaigns')}
+            >
+              <FaBullhorn size={16} />
+              <span>Campanhas de DM</span>
+            </button>
+            <button
+              className={`dashboard-nav-tab ${activeTab === 'affiliates' ? 'active' : ''}`}
+              onClick={() => setActiveTab('affiliates')}
+            >
+              <FaLink size={16} />
+              <span>Afiliados & Links</span>
             </button>
           </div>
 
-          {/* Stats cards */}
-          <div className="stats-grid">
-            <StatsCard
-              title="DMs Enviados"
-              value={totalDms.toLocaleString('pt-BR')}
-              icon={<FaPaperPlane size={22} />}
-              color="indigo"
-            />
-            <StatsCard
-              title="Total de Campanhas"
-              value={totalCampaigns}
-              icon={<FaBullhorn size={22} />}
-              color="purple"
-            />
-            <StatsCard
-              title="Campanhas Ativas"
-              value={activeCampaigns}
-              icon={<FaUsers size={22} />}
-              color="pink"
-            />
-          </div>
-
-          {/* Instagram Connection Card */}
-          <div className={`instagram-card ${isConnected ? 'connected' : ''}`}>
-            <div className="instagram-card-content">
-              <div className="instagram-card-left">
-                <div className={`instagram-card-icon ${isConnected ? 'connected' : ''}`}>
-                  <FaInstagram size={28} />
+          {/* Tab 1: Campanhas */}
+          {activeTab === 'campaigns' && (
+            <>
+              {/* Page title */}
+              <div className="page-header">
+                <div>
+                  <h1 className="page-title">Dashboard</h1>
+                  <p className="page-subtitle">
+                    Gerencie suas campanhas de DM e acompanhe os resultados.
+                  </p>
                 </div>
-                <div className="instagram-card-info">
-                  <h3 className="instagram-card-title">
-                    {isConnected ? 'Instagram Conectado' : 'Conectar Instagram'}
-                  </h3>
-                  {isConnected ? (
-                    <p className="instagram-card-desc">
-                      <FaCheckCircle size={13} style={{ color: 'var(--success)', marginRight: 6 }} />
-                      {userData?.instagramUsername
-                        ? `@${userData.instagramUsername}`
-                        : 'Conta conectada com sucesso'}
-                    </p>
-                  ) : (
-                    <p className="instagram-card-desc">
-                      <FaTimesCircle size={13} style={{ color: 'var(--danger)', marginRight: 6 }} />
-                      Conecte sua conta para ativar as automações.
-                    </p>
-                  )}
-                </div>
+                <button className="btn-primary" onClick={handleNewCampaign}>
+                  <FaPlus size={14} />
+                  Nova Campanha
+                </button>
               </div>
 
-              <div className="instagram-card-action">
-                {isConnected ? (
-                  <button
-                    className="btn-outline btn-danger-outline"
-                    onClick={handleDisconnectInstagram}
-                    disabled={disconnecting}
-                  >
-                    {disconnecting ? (
-                      <span className="btn-spinner" />
+              {/* Stats cards */}
+              <div className="stats-grid">
+                <StatsCard
+                  title="DMs Enviados"
+                  value={totalDms.toLocaleString('pt-BR')}
+                  icon={<FaPaperPlane size={22} />}
+                  color="indigo"
+                />
+                <StatsCard
+                  title="Total de Campanhas"
+                  value={totalCampaigns}
+                  icon={<FaBullhorn size={22} />}
+                  color="purple"
+                />
+                <StatsCard
+                  title="Campanhas Ativas"
+                  value={activeCampaigns}
+                  icon={<FaUsers size={22} />}
+                  color="pink"
+                />
+              </div>
+
+              {/* Instagram Connection Card */}
+              <div className={`instagram-card ${isConnected ? 'connected' : ''}`}>
+                <div className="instagram-card-content">
+                  <div className="instagram-card-left">
+                    <div className={`instagram-card-icon ${isConnected ? 'connected' : ''}`}>
+                      <FaInstagram size={28} />
+                    </div>
+                    <div className="instagram-card-info">
+                      <h3 className="instagram-card-title">
+                        {isConnected ? 'Instagram Conectado' : 'Conectar Instagram'}
+                      </h3>
+                      {isConnected ? (
+                        <p className="instagram-card-desc">
+                          <FaCheckCircle size={13} style={{ color: 'var(--success)', marginRight: 6 }} />
+                          {userData?.instagramUsername
+                            ? `@${userData.instagramUsername}`
+                            : 'Conta conectada com sucesso'}
+                        </p>
+                      ) : (
+                        <p className="instagram-card-desc">
+                          <FaTimesCircle size={13} style={{ color: 'var(--danger)', marginRight: 6 }} />
+                          Conecte sua conta para ativar as automações.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="instagram-card-action">
+                    {isConnected ? (
+                      <button
+                        className="btn-outline btn-danger-outline"
+                        onClick={handleDisconnectInstagram}
+                        disabled={disconnecting}
+                      >
+                        {disconnecting ? (
+                          <span className="btn-spinner" />
+                        ) : (
+                          <FaUnlink size={14} />
+                        )}
+                        Desconectar
+                      </button>
                     ) : (
-                      <FaUnlink size={14} />
+                      <button className="btn-instagram" onClick={handleConnectInstagram}>
+                        <FaInstagram size={16} />
+                        Conectar com Instagram
+                      </button>
                     )}
-                    Desconectar
-                  </button>
-                ) : (
-                  <button className="btn-instagram" onClick={handleConnectInstagram}>
-                    <FaInstagram size={16} />
-                    Conectar com Instagram
-                  </button>
+                  </div>
+                </div>
+
+                {!isConnected && (
+                  <div className="instagram-card-warning">
+                    <span>⚠️</span>
+                    <span>
+                      Você precisa conectar sua conta do Instagram Business para que as campanhas funcionem.
+                    </span>
+                  </div>
                 )}
               </div>
-            </div>
 
-            {!isConnected && (
-              <div className="instagram-card-warning">
-                <span>⚠️</span>
-                <span>
-                  Você precisa conectar sua conta do Instagram Business para que as campanhas funcionem.
-                </span>
+              {/* Campaigns section */}
+              <div className="campaigns-section">
+                <div className="section-header">
+                  <div>
+                    <h2 className="section-title">Campanhas</h2>
+                    <p className="section-subtitle">
+                      Suas automações de DM ativas e pausadas.
+                    </p>
+                  </div>
+                  <button className="btn-primary btn-sm" onClick={handleNewCampaign}>
+                    <FaPlus size={12} />
+                    Nova Campanha
+                  </button>
+                </div>
+
+                <CampaignList
+                  onEdit={handleEditCampaign}
+                  onStatsUpdate={handleStatsUpdate}
+                />
               </div>
-            )}
-          </div>
+            </>
+          )}
 
-          {/* Campaigns section */}
-          <div className="campaigns-section">
-            <div className="section-header">
-              <div>
-                <h2 className="section-title">Campanhas</h2>
-                <p className="section-subtitle">
-                  Suas automações de DM ativas e pausadas.
-                </p>
-              </div>
-              <button className="btn-primary btn-sm" onClick={handleNewCampaign}>
-                <FaPlus size={12} />
-                Nova Campanha
-              </button>
-            </div>
-
-            <CampaignList
-              onEdit={handleEditCampaign}
-              onStatsUpdate={handleStatsUpdate}
-            />
-          </div>
+          {/* Tab 2: Afiliados & Links */}
+          {activeTab === 'affiliates' && <AffiliateHub />}
         </div>
       </main>
 
