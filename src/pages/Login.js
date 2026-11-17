@@ -1,6 +1,6 @@
 // src/pages/Login.js
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { FaGoogle, FaInstagram, FaRobot, FaBolt, FaChartLine } from 'react-icons/fa';
 import { useAuth } from '../context/AuthContext';
@@ -138,8 +138,15 @@ export default function Login() {
 
             <div className="login-card-footer">
               <p>
-                Termos de Uso e Política de Privacidade ainda não foram publicados.
-                Publique documentos distintos antes de disponibilizar o app para outras pessoas.
+                Ao continuar, você concorda com nossos{' '}
+                <Link to="/termos" target="_blank" className="link-inline">
+                  Termos de Uso
+                </Link>{' '}
+                e{' '}
+                <Link to="/privacidade" target="_blank" className="link-inline">
+                  Política de Privacidade
+                </Link>
+                .
               </p>
             </div>
           </div>

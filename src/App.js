@@ -5,6 +5,8 @@ import { useAuth } from './context/AuthContext';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import AuthCallback from './pages/AuthCallback';
+import TermosDeUso from './pages/TermosDeUso';
+import PoliticaPrivacidade from './pages/PoliticaPrivacidade';
 
 function PrivateRoute({ children }) {
   const { user, loading } = useAuth();
@@ -67,6 +69,8 @@ function App() {
           }
         />
         <Route path="/auth/callback" element={<AuthCallback />} />
+        <Route path="/termos" element={<TermosDeUso />} />
+        <Route path="/privacidade" element={<PoliticaPrivacidade />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>
