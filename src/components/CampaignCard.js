@@ -58,6 +58,48 @@ export default function CampaignCard({ campaign, onEdit }) {
     }
   };
 
+  const renderScopeBadge = () => {
+    const targetType = campaign.targetType;
+    const mediaId = (campaign.mediaId || '').trim();
+    const legacyPostId = (campaign.postId || '').trim();
+
+    if (targetType === 'next_post') {
+      if (mediaId) {
+        return (
+          <span className="post-badge post-linked-badge" title={`Post vinculado: ${mediaId}`}>
+            ✅ Post Vinculado
+          </span>
+        );
+      }
+      return (
+        <span className="post-badge next-post-badge" title="Aguardando publicação do próximo post">
+          ⏳ Aguardando Próximo Post
+        </span>
+      );
+    }
+
+    if (targetType === 'all_posts') {
+      return (
+        <span className="post-badge all-posts-badge" title="Ativo em todas as postagens">
+          🌐 Todos os Posts
+        </span>
+      );
+    }
+
+    if (targetType === 'specific_post' || legacyPostId) {
+      return (
+        <span
+          className="post-badge"
+          title={mediaId ? `ID: ${mediaId}` : legacyPostId ? `ID: ${legacyPostId}` : undefined}
+        >
+          Post específico
+        </span>
+      );
+    }
+
+    return null;
+  };
+
   return (
     <div className={`campaign-card ${campaign.active ? 'active' : 'inactive'}`}>
       {/* Status indicator */}
@@ -78,9 +120,7 @@ export default function CampaignCard({ campaign, onEdit }) {
                   {campaign.matchType === 'exact' ? 'Exata' : 'Parcial'}
                 </span>
               )}
-              {campaign.postId && (
-                <span className="post-badge">Post específico</span>
-              )}
+              {renderScopeBadge()}
             </div>
           </div>
 

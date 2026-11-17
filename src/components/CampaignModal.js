@@ -6,6 +6,9 @@ import {
   addDoc,
   updateDoc,
   serverTimestamp,
+  query,
+  where,
+  getDocs,
 } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import {
@@ -15,6 +18,16 @@ import {
   FaEnvelope,
   FaCommentDots,
   FaImage,
+  FaClock,
+  FaGlobe,
+  FaPaperclip,
+  FaLink,
+  FaSearch,
+  FaAmazon,
+  FaShoppingBag,
+  FaFire,
+  FaGraduationCap,
+  FaTag,
 } from 'react-icons/fa';
 import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
@@ -22,7 +35,8 @@ import { useAuth } from '../context/AuthContext';
 const defaultForm = {
   name: '',
   keyword: '',
-  postId: '',
+  targetType: 'next_post',
+  mediaId: '',
   matchType: 'partial',
   dmMessage: '',
   commentReply: '',
@@ -34,8 +48,18 @@ export default function CampaignModal({ campaign, onClose }) {
   const [form, setForm] = useState(defaultForm);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState({});
+
+  // Affiliate links selector state
+  const [showLinkSelector, setShowLinkSelector] = useState(false);
+  const [affiliateLinks, setAffiliateLinks] = useState([]);
+  const [loadingLinks, setLoadingLinks] = useState(false);
+  const [linksError, setLinksError] = useState(null);
+  const [linkSearch, setLinkSearch] = useState('');
+
   const modalRef = useRef(null);
   const firstInputRef = useRef(null);
+  const linkSelectorRef = useRef(null);
+  const dmTextareaRef = useRef(null);
   const savingRef = useRef(false);
   savingRef.current = saving;
 
@@ -43,10 +67,20 @@ export default function CampaignModal({ campaign, onClose }) {
 
   useEffect(() => {
     if (campaign) {
+      let initialTargetType = 'next_post';
+      if (campaign.targetType) {
+        initialTargetType = campaign.targetType;
+      } else if (campaign.mediaId || campaign.postId) {
+        initialTargetType = 'specific_post';
+      } else {
+        initialTargetType = 'all_posts';
+      }
+
       setForm({
         name: campaign.name || '',
         keyword: campaign.keyword || '',
-        postId: campaign.postId || '',
+        targetType: initialTargetType,
+        mediaId: campaign.mediaId || campaign.postId || '',
         matchType: campaign.matchType || 'partial',
         dmMessage: campaign.dmMessage || '',
         commentReply: campaign.commentReply || '',
@@ -66,6 +100,10 @@ export default function CampaignModal({ campaign, onClose }) {
 
     const handleKeyDown = (e) => {
       if (e.key === 'Escape' && !savingRef.current) {
+        if (showLinkSelector) {
+          setShowLinkSelector(false);
+          return;
+        }
         onClose();
         return;
       }
@@ -93,7 +131,133 @@ export default function CampaignModal({ campaign, onClose }) {
       document.removeEventListener('keydown', handleKeyDown);
       previouslyFocused?.focus?.();
     };
-  }, [onClose]);
+  }, [onClose, showLinkSelector]);
+
+  // Handle clicking outside the affiliate link selector popover
+  useEffect(() => {
+    if (!showLinkSelector) return;
+    const handleClickOutside = (e) => {
+      if (linkSelectorRef.current && !linkSelectorRef.current.contains(e.target)) {
+        setShowLinkSelector(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showLinkSelector]);
+
+  const fetchAffiliateLinks = async () => {
+    if (!user?.uid) return;
+    setLoadingLinks(true);
+    setLinksError(null);
+    try {
+      const q = query(
+        collection(db, 'affiliate_links'),
+        where('userId', '==', user.uid)
+      );
+      const snap = await getDocs(q);
+      const links = snap.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...docSnap.data(),
+      }));
+      setAffiliateLinks(links);
+    } catch (err) {
+      console.error('Error fetching affiliate links:', err);
+      setLinksError('Não foi possível carregar os links de afiliado.');
+    } finally {
+      setLoadingLinks(false);
+    }
+  };
+
+  const handleToggleLinkSelector = () => {
+    const nextState = !showLinkSelector;
+    setShowLinkSelector(nextState);
+    if (nextState) {
+      fetchAffiliateLinks();
+    }
+  };
+
+  const handleInsertAffiliateLink = (linkItem) => {
+    const urlToInsert = linkItem.affiliateUrl || linkItem.originalUrl;
+    if (!urlToInsert) return;
+
+    const textarea = dmTextareaRef.current;
+    let newText = '';
+    let newCursorPos = 0;
+
+    if (textarea) {
+      const start = textarea.selectionStart ?? form.dmMessage.length;
+      const end = textarea.selectionEnd ?? form.dmMessage.length;
+      const current = form.dmMessage;
+      const before = current.substring(0, start);
+      const after = current.substring(end);
+
+      const needsLeadingSpace = before.length > 0 && !/\s$/.test(before);
+      const needsTrailingSpace = after.length > 0 && !/^\s/.test(after);
+
+      const insertion = (needsLeadingSpace ? ' ' : '') + urlToInsert + (needsTrailingSpace ? ' ' : '');
+      newText = before + insertion + after;
+      newCursorPos = before.length + insertion.length;
+    } else {
+      newText = form.dmMessage ? `${form.dmMessage} ${urlToInsert}` : urlToInsert;
+      newCursorPos = newText.length;
+    }
+
+    if (newText.length > 1000) {
+      toast.error('A mensagem excede o limite máximo de 1000 caracteres com este link.');
+      return;
+    }
+
+    setForm((prev) => ({
+      ...prev,
+      dmMessage: newText,
+    }));
+    if (errors.dmMessage) {
+      setErrors((prev) => ({ ...prev, dmMessage: '' }));
+    }
+
+    setShowLinkSelector(false);
+
+    setTimeout(() => {
+      if (textarea) {
+        textarea.focus();
+        textarea.setSelectionRange(newCursorPos, newCursorPos);
+      }
+    }, 50);
+
+    toast.success(`Link de "${linkItem.title}" inserido!`);
+  };
+
+  const getPlatformIcon = (platform) => {
+    const p = (platform || '').toLowerCase();
+    switch (p) {
+      case 'amazon':
+        return <FaAmazon className="platform-icon amazon" title="Amazon" />;
+      case 'hotmart':
+        return <FaFire className="platform-icon hotmart" title="Hotmart" />;
+      case 'eduzz':
+        return <FaGraduationCap className="platform-icon eduzz" title="Eduzz" />;
+      case 'shopee':
+        return <FaShoppingBag className="platform-icon shopee" title="Shopee" />;
+      default:
+        return <FaTag className="platform-icon default" title={platform || 'Afiliado'} />;
+    }
+  };
+
+  const filteredLinks = affiliateLinks.filter((item) => {
+    if (!linkSearch.trim()) return true;
+    const term = linkSearch.toLowerCase();
+    return (
+      (item.title && item.title.toLowerCase().includes(term)) ||
+      (item.platform && item.platform.toLowerCase().includes(term))
+    );
+  });
+
+  const fisicoLinks = filteredLinks.filter((item) => item.categoryType === 'fisico');
+  const infoprodutoLinks = filteredLinks.filter(
+    (item) => item.categoryType === 'infoproduto' || (!item.categoryType && !fisicoLinks.includes(item))
+  );
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -114,6 +278,9 @@ export default function CampaignModal({ campaign, onClose }) {
     if (form.name.trim().length > 60) newErrors.name = 'Nome deve ter no máximo 60 caracteres.';
     if (form.keyword.trim().length > 50) newErrors.keyword = 'Palavra-chave deve ter no máximo 50 caracteres.';
     if (form.dmMessage.trim().length > 1000) newErrors.dmMessage = 'Mensagem deve ter no máximo 1000 caracteres.';
+    if (form.targetType === 'specific_post' && !form.mediaId.trim()) {
+      newErrors.mediaId = 'Informe o ID da postagem específica.';
+    }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -125,10 +292,15 @@ export default function CampaignModal({ campaign, onClose }) {
 
     setSaving(true);
     try {
+      const isSpecific = form.targetType === 'specific_post';
+      const cleanMediaId = isSpecific ? form.mediaId.trim() : '';
+
       const payload = {
         name: form.name.trim(),
         keyword: form.keyword.trim().toUpperCase(),
-        postId: form.postId.trim(),
+        targetType: form.targetType,
+        mediaId: cleanMediaId,
+        postId: cleanMediaId, // Backward compatibility
         matchType: form.matchType,
         dmMessage: form.dmMessage.trim(),
         commentReply: form.commentReply.trim(),
@@ -279,25 +451,104 @@ export default function CampaignModal({ campaign, onClose }) {
               </div>
             </div>
 
-            {/* Post ID */}
+            {/* Scope selector (Target type) */}
             <div className="form-group">
-              <label className="form-label" htmlFor="postId">
-                <FaImage size={12} />
-                Post Alvo (opcional)
+              <label className="form-label">
+                <FaBullhorn size={12} />
+                Escopo da Postagem <span className="required">*</span>
               </label>
-              <input
-                id="postId"
-                name="postId"
-                type="text"
-                className="form-input"
-                placeholder="ID do post ou deixe em branco para todos os posts"
-                value={form.postId}
-                onChange={handleChange}
-              />
-              <span className="form-hint">
-                Deixe em branco para aplicar a todos os comentários do perfil.
-              </span>
+              <div className="scope-selector" role="radiogroup" aria-label="Escopo da Postagem">
+                {/* 1. Próxima Postagem (Automático) */}
+                <label className={`scope-option ${form.targetType === 'next_post' ? 'selected' : ''}`}>
+                  <input
+                    type="radio"
+                    name="targetType"
+                    value="next_post"
+                    checked={form.targetType === 'next_post'}
+                    onChange={handleChange}
+                    className="scope-radio-input"
+                  />
+                  <div className="scope-icon-wrap">
+                    <FaClock size={16} />
+                  </div>
+                  <div className="scope-info">
+                    <span className="scope-title">Próxima Postagem (Automático)</span>
+                    <span className="scope-description">
+                      Aguardará a próxima publicação no perfil após a criação para vincular automaticamente.
+                    </span>
+                  </div>
+                </label>
+
+                {/* 2. Postagem Específica */}
+                <label className={`scope-option ${form.targetType === 'specific_post' ? 'selected' : ''}`}>
+                  <input
+                    type="radio"
+                    name="targetType"
+                    value="specific_post"
+                    checked={form.targetType === 'specific_post'}
+                    onChange={handleChange}
+                    className="scope-radio-input"
+                  />
+                  <div className="scope-icon-wrap">
+                    <FaImage size={16} />
+                  </div>
+                  <div className="scope-info">
+                    <span className="scope-title">Postagem Específica</span>
+                    <span className="scope-description">
+                      Ativa a automação apenas nos comentários da publicação informada por ID.
+                    </span>
+                  </div>
+                </label>
+
+                {/* 3. Todas as Postagens */}
+                <label className={`scope-option ${form.targetType === 'all_posts' ? 'selected' : ''}`}>
+                  <input
+                    type="radio"
+                    name="targetType"
+                    value="all_posts"
+                    checked={form.targetType === 'all_posts'}
+                    onChange={handleChange}
+                    className="scope-radio-input"
+                  />
+                  <div className="scope-icon-wrap">
+                    <FaGlobe size={16} />
+                  </div>
+                  <div className="scope-info">
+                    <span className="scope-title">Todas as Postagens</span>
+                    <span className="scope-description">
+                      Responde aos comentários de qualquer publicação ativa no seu perfil.
+                    </span>
+                  </div>
+                </label>
+              </div>
             </div>
+
+            {/* Post ID field if specific post */}
+            {form.targetType === 'specific_post' && (
+              <div className="form-group specific-post-field">
+                <label className="form-label" htmlFor="mediaId">
+                  <FaImage size={12} />
+                  ID da Postagem (Media ID) <span className="required">*</span>
+                </label>
+                <input
+                  id="mediaId"
+                  name="mediaId"
+                  type="text"
+                  className={`form-input ${errors.mediaId ? 'error' : ''}`}
+                  placeholder="ex: 17982345678901234"
+                  value={form.mediaId}
+                  onChange={handleChange}
+                  aria-invalid={Boolean(errors.mediaId)}
+                  aria-describedby={errors.mediaId ? 'campaign-mediaid-error' : undefined}
+                />
+                {errors.mediaId && (
+                  <span className="form-error" id="campaign-mediaid-error">{errors.mediaId}</span>
+                )}
+                <span className="form-hint">
+                  Informe o identificador da publicação do Instagram para vincular.
+                </span>
+              </div>
+            )}
 
             {/* DM message */}
             <div className="form-group">
@@ -306,6 +557,7 @@ export default function CampaignModal({ campaign, onClose }) {
                 Mensagem de Direct <span className="required">*</span>
               </label>
               <textarea
+                ref={dmTextareaRef}
                 id="dmMessage"
                 name="dmMessage"
                 className={`form-textarea ${errors.dmMessage ? 'error' : ''}`}
@@ -317,6 +569,157 @@ export default function CampaignModal({ campaign, onClose }) {
                 aria-invalid={Boolean(errors.dmMessage)}
                 aria-describedby={errors.dmMessage ? 'campaign-message-error' : undefined}
               />
+
+              {/* Affiliate Link Selector Action Bar */}
+              <div className="dm-actions-bar">
+                <div className="affiliate-selector-wrapper" ref={linkSelectorRef}>
+                  <button
+                    type="button"
+                    className="btn-insert-affiliate"
+                    onClick={handleToggleLinkSelector}
+                    aria-expanded={showLinkSelector}
+                  >
+                    <FaPaperclip size={12} />
+                    Inserir Link de Afiliado
+                  </button>
+
+                  {showLinkSelector && (
+                    <div className="affiliate-link-selector">
+                      <div className="affiliate-selector-header">
+                        <span className="affiliate-selector-title">
+                          <FaLink size={12} /> Selecionar Link de Afiliado
+                        </span>
+                        <button
+                          type="button"
+                          className="affiliate-selector-close"
+                          onClick={() => setShowLinkSelector(false)}
+                          aria-label="Fechar"
+                        >
+                          <FaTimes size={12} />
+                        </button>
+                      </div>
+
+                      <div className="affiliate-selector-search">
+                        <FaSearch size={11} className="search-icon" />
+                        <input
+                          type="text"
+                          placeholder="Filtrar por produto ou plataforma..."
+                          value={linkSearch}
+                          onChange={(e) => setLinkSearch(e.target.value)}
+                          className="affiliate-search-input"
+                          autoFocus
+                        />
+                      </div>
+
+                      <div className="affiliate-selector-body">
+                        {loadingLinks ? (
+                          <div className="affiliate-loading">
+                            <span className="btn-spinner" />
+                            <span>Buscando links...</span>
+                          </div>
+                        ) : linksError ? (
+                          <div className="affiliate-error">
+                            <span>{linksError}</span>
+                            <button
+                              type="button"
+                              className="btn-retry"
+                              onClick={fetchAffiliateLinks}
+                            >
+                              Tentar novamente
+                            </button>
+                          </div>
+                        ) : filteredLinks.length === 0 ? (
+                          <div className="affiliate-empty">
+                            {affiliateLinks.length === 0 ? (
+                              <>
+                                <p>Nenhum link de afiliado cadastrado.</p>
+                                <span className="affiliate-empty-hint">
+                                  Gere seus links na aba de Afiliados para inseri-los aqui.
+                                </span>
+                              </>
+                            ) : (
+                              <p>Nenhum link encontrado para "{linkSearch}".</p>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="affiliate-groups">
+                            {/* Infoprodutos */}
+                            {infoprodutoLinks.length > 0 && (
+                              <div className="affiliate-group">
+                                <div className="affiliate-group-header">
+                                  🎓 Infoprodutos ({infoprodutoLinks.length})
+                                </div>
+                                <div className="affiliate-group-items">
+                                  {infoprodutoLinks.map((item) => (
+                                    <button
+                                      key={item.id}
+                                      type="button"
+                                      className="affiliate-link-item"
+                                      onClick={() => handleInsertAffiliateLink(item)}
+                                      title={item.title}
+                                    >
+                                      <div className="affiliate-item-icon">
+                                        {getPlatformIcon(item.platform)}
+                                      </div>
+                                      <div className="affiliate-item-details">
+                                        <span className="affiliate-item-title">
+                                          {item.title}
+                                        </span>
+                                        <div className="affiliate-item-meta">
+                                          <span className="platform-tag">{item.platform}</span>
+                                          <span className="url-preview">
+                                            {item.affiliateUrl || item.originalUrl}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Produtos Físicos */}
+                            {fisicoLinks.length > 0 && (
+                              <div className="affiliate-group">
+                                <div className="affiliate-group-header">
+                                  📦 Produtos Físicos ({fisicoLinks.length})
+                                </div>
+                                <div className="affiliate-group-items">
+                                  {fisicoLinks.map((item) => (
+                                    <button
+                                      key={item.id}
+                                      type="button"
+                                      className="affiliate-link-item"
+                                      onClick={() => handleInsertAffiliateLink(item)}
+                                      title={item.title}
+                                    >
+                                      <div className="affiliate-item-icon">
+                                        {getPlatformIcon(item.platform)}
+                                      </div>
+                                      <div className="affiliate-item-details">
+                                        <span className="affiliate-item-title">
+                                          {item.title}
+                                        </span>
+                                        <div className="affiliate-item-meta">
+                                          <span className="platform-tag">{item.platform}</span>
+                                          <span className="url-preview">
+                                            {item.affiliateUrl || item.originalUrl}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {errors.dmMessage && (
                 <span className="form-error" id="campaign-message-error">{errors.dmMessage}</span>
               )}
