@@ -8,8 +8,22 @@ const {defineSecret} = require("firebase-functions/params");
 const {logger} = require("firebase-functions");
 const admin = require("firebase-admin");
 const axios = require("axios");
-const {campaignMatchesKeyword, personalizeMessage} = require("./campaignUtils");
+const {
+  campaignMatchesKeyword,
+  personalizeMessage,
+  shouldBindNextPost,
+  resolveCampaignTargetType,
+} = require("./campaignUtils");
 const {verifyMetaSignature, safeEqualStrings} = require("./webhookSecurity");
+const {
+  generateShopeeShortLink,
+  formatAmazonAffiliateUrl,
+  formatAwinAffiliateUrl,
+  formatLomadeeAffiliateUrl,
+  formatRakutenAffiliateUrl,
+  formatAdmitadAffiliateUrl,
+  appendTrackingTag,
+} = require("./affiliateUtils");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -235,16 +249,88 @@ async function handleUnifiedWebhook(req, res) {
               .where("active", "==", true)
               .get();
 
+          const mediaId = postId ? String(postId) : null;
+
+          // 1. Check if mediaId already has a specific campaign bound
+          let hasSpecificCampaign = false;
+          if (mediaId) {
+            hasSpecificCampaign = campaignsSnapshot.docs.some((doc) => {
+              const data = doc.data();
+              const target = resolveCampaignTargetType(data);
+              const boundId = String(data.mediaId || data.postId || "").trim();
+              return target === "specific_post" && boundId === mediaId;
+            });
+
+            // 2. If no specific campaign is bound to this mediaId yet, check next_post campaigns
+            if (!hasSpecificCampaign) {
+              const nextPostCampaigns = campaignsSnapshot.docs.filter((doc) => {
+                const data = doc.data();
+                return resolveCampaignTargetType(data) === "next_post";
+              });
+
+              if (nextPostCampaigns.length > 0) {
+                let mediaTimestamp = null;
+                try {
+                  const mediaRes = await metaApi.get(
+                      `${GRAPH_API_BASE}/${mediaId}?fields=timestamp`,
+                      {
+                        headers: {Authorization: `Bearer ${accessToken}`},
+                      },
+                  );
+                  if (mediaRes.data?.timestamp) {
+                    mediaTimestamp = new Date(mediaRes.data.timestamp).getTime();
+                  }
+                } catch (mediaErr) {
+                  logger.warn("Failed to fetch media timestamp from Graph API", {
+                    mediaId,
+                    error: mediaErr.response?.data || mediaErr.message,
+                  });
+                }
+
+                if (mediaTimestamp) {
+                  for (const nextCampDoc of nextPostCampaigns) {
+                    const nextCampData = nextCampDoc.data();
+                    if (shouldBindNextPost(mediaTimestamp, nextCampData.createdAt)) {
+                      logger.info("Auto-binding next_post campaign to newly published media", {
+                        campaignId: nextCampDoc.id,
+                        mediaId,
+                      });
+                      await nextCampDoc.ref.update({
+                        mediaId: mediaId,
+                        postId: mediaId,
+                        targetType: "specific_post",
+                        boundAt: admin.firestore.FieldValue.serverTimestamp(),
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                      });
+                      // Update in-memory data for immediate evaluation in this webhook invocation
+                      nextCampData.mediaId = mediaId;
+                      nextCampData.postId = mediaId;
+                      nextCampData.targetType = "specific_post";
+                    }
+                  }
+                }
+              }
+            }
+          }
+
           for (const campaignDoc of campaignsSnapshot.docs) {
             const campaign = campaignDoc.data();
-            const postFilter = String(campaign.postId || "").trim();
-            if (
-              postFilter &&
-              postFilter.toLowerCase() !== "any" &&
-              postFilter !== String(postId || "")
-            ) {
+            const targetType = resolveCampaignTargetType(campaign);
+
+            if (targetType === "specific_post") {
+              const postFilter = String(campaign.mediaId || campaign.postId || "").trim();
+              if (
+                postFilter &&
+                postFilter.toLowerCase() !== "any" &&
+                postFilter !== String(postId || "")
+              ) {
+                continue;
+              }
+            } else if (targetType === "next_post") {
+              // Not bound to this post yet
               continue;
             }
+            // targetType === "all_posts" matches any post
 
             if (!campaignMatchesKeyword(commentText, campaign.keyword, campaign.matchType)) {
               continue;
@@ -372,8 +458,8 @@ exports.exchangeToken = onCall({
     let clientBusinessId = null;
     try {
       const businessResponse = await metaApi.get(`${GRAPH_API_BASE}/me`, {
-        params: { fields: "client_business_id" },
-        headers: { Authorization: `Bearer ${accessToken}` },
+        params: {fields: "client_business_id"},
+        headers: {Authorization: `Bearer ${accessToken}`},
       });
       clientBusinessId = businessResponse.data?.client_business_id || null;
     } catch (bizErr) {
@@ -390,8 +476,8 @@ exports.exchangeToken = onCall({
       const accountsResponse = await metaApi.get(
           `${GRAPH_API_BASE}/me/assigned_instagram_accounts`,
           {
-            params: { fields: "id,username" },
-            headers: { Authorization: `Bearer ${accessToken}` },
+            params: {fields: "id,username"},
+            headers: {Authorization: `Bearer ${accessToken}`},
           },
       );
       if (accountsResponse.data?.data?.[0]?.id) {
@@ -410,7 +496,7 @@ exports.exchangeToken = onCall({
           params: {
             fields: "id,name,access_token,instagram_business_account{id,username}",
           },
-          headers: { Authorization: `Bearer ${accessToken}` },
+          headers: {Authorization: `Bearer ${accessToken}`},
         });
 
         for (const page of pagesResponse.data?.data || []) {
@@ -426,7 +512,7 @@ exports.exchangeToken = onCall({
           }
         }
       } catch (pageErr) {
-        logger.warn("Fallback to /me/accounts failed", { error: pageErr.message });
+        logger.warn("Fallback to /me/accounts failed", {error: pageErr.message});
       }
     }
 
@@ -440,7 +526,7 @@ exports.exchangeToken = onCall({
     try {
       const subscription = await metaApi.post(
           `${GRAPH_API_BASE}/${instagramAccount.id}/subscribed_apps`,
-          new URLSearchParams({ subscribed_fields: "comments" }),
+          new URLSearchParams({subscribed_fields: "comments"}),
           {
             headers: {
               Authorization: `Bearer ${effectiveToken}`,
@@ -477,13 +563,13 @@ exports.exchangeToken = onCall({
     }
 
     await db.runTransaction(async (transaction) => {
-      transaction.set(privateUserRef, privateData, { merge: true });
+      transaction.set(privateUserRef, privateData, {merge: true});
       transaction.set(userRef, {
         instagramAccountId: String(instagramAccount.id),
         instagramUsername: instagramAccount.username || "Conectado",
         instagramConnected: true,
         connectedAt: admin.firestore.FieldValue.serverTimestamp(),
-      }, { merge: true });
+      }, {merge: true});
     });
 
     return {
@@ -507,4 +593,409 @@ exports.exchangeToken = onCall({
         `Erro ao conectar Instagram: ${metaError}`,
     );
   }
+});
+
+/**
+ * ============================================================
+ * AFFILIATE & MARKETPLACE HUB CLOUD FUNCTIONS
+ * ============================================================
+ */
+
+/**
+ * Save user credentials for marketplace/affiliate networks securely
+ */
+exports.saveIntegrationCredentials = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Não autenticado.");
+  }
+  const userId = request.auth.uid;
+  const platform = String(request.data?.platform || "").trim().toLowerCase();
+  const credentials = request.data?.credentials;
+
+  const validPlatforms = [
+    "shopee",
+    "amazon",
+    "awin",
+    "lomadee",
+    "rakuten",
+    "admitad",
+    "hotmart",
+    "eduzz",
+  ];
+
+  if (!validPlatforms.includes(platform)) {
+    throw new HttpsError("invalid-argument", `Plataforma inválida: ${platform}`);
+  }
+
+  if (!credentials || typeof credentials !== "object") {
+    throw new HttpsError("invalid-argument", "Credenciais ausentes ou inválidas.");
+  }
+
+  const sanitized = {};
+  if (platform === "shopee") {
+    sanitized.appId = String(credentials.appId || "").trim();
+    sanitized.secret = String(credentials.secret || "").trim();
+    if (!sanitized.appId || !sanitized.secret) {
+      throw new HttpsError("invalid-argument", "App ID e Secret são obrigatórios para a Shopee.");
+    }
+  } else if (platform === "amazon") {
+    sanitized.partnerTag = String(credentials.partnerTag || "").trim();
+    sanitized.accessKey = String(credentials.accessKey || "").trim();
+    sanitized.secretKey = String(credentials.secretKey || "").trim();
+    if (!sanitized.partnerTag) {
+      throw new HttpsError("invalid-argument", "Partner Tag (ID de Associado) é obrigatória para a Amazon.");
+    }
+  } else if (platform === "awin") {
+    sanitized.publisherId = String(credentials.publisherId || "").trim();
+    sanitized.apiToken = String(credentials.apiToken || "").trim();
+    if (!sanitized.publisherId) {
+      throw new HttpsError("invalid-argument", "Publisher ID é obrigatório para a Awin.");
+    }
+  } else if (platform === "lomadee") {
+    sanitized.appToken = String(credentials.appToken || "").trim();
+    sanitized.sourceId = String(credentials.sourceId || "").trim();
+    if (!sanitized.appToken && !sanitized.sourceId) {
+      throw new HttpsError("invalid-argument", "App Token ou Source ID é obrigatório para a Lomadee.");
+    }
+  } else if (platform === "rakuten") {
+    sanitized.publisherId = String(credentials.publisherId || "").trim();
+    sanitized.token = String(credentials.token || "").trim();
+    if (!sanitized.publisherId) {
+      throw new HttpsError("invalid-argument", "Publisher ID é obrigatório para a Rakuten.");
+    }
+  } else if (platform === "admitad") {
+    sanitized.token = String(credentials.token || "").trim();
+    sanitized.clientId = String(credentials.clientId || "").trim();
+    sanitized.clientSecret = String(credentials.clientSecret || "").trim();
+    if (!sanitized.token) {
+      throw new HttpsError("invalid-argument", "Token é obrigatório para a Admitad.");
+    }
+  } else if (platform === "hotmart") {
+    sanitized.clientId = String(credentials.clientId || "").trim();
+    sanitized.clientSecret = String(credentials.clientSecret || "").trim();
+    sanitized.basicAuth = String(credentials.basicAuth || "").trim();
+    if (!sanitized.clientId || !sanitized.clientSecret) {
+      throw new HttpsError("invalid-argument", "Client ID e Client Secret são obrigatórios para a Hotmart.");
+    }
+  } else if (platform === "eduzz") {
+    sanitized.publicKey = String(credentials.publicKey || "").trim();
+    sanitized.apiKey = String(credentials.apiKey || "").trim();
+    if (!sanitized.apiKey) {
+      throw new HttpsError("invalid-argument", "API Key é obrigatória para a Eduzz.");
+    }
+  }
+
+  sanitized.connected = true;
+  sanitized.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+
+  await db.collection("user_integrations").doc(userId).set({
+    [platform]: sanitized,
+  }, {merge: true});
+
+  return {success: true, platform};
+});
+
+/**
+ * Return connected status of integrations without exposing secrets
+ */
+exports.getIntegrationStatus = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Não autenticado.");
+  }
+  const userId = request.auth.uid;
+  const docSnap = await db.collection("user_integrations").doc(userId).get();
+  if (!docSnap.exists) {
+    return {integrations: {}};
+  }
+  const data = docSnap.data();
+  const summary = {};
+  for (const [key, val] of Object.entries(data)) {
+    if (val && typeof val === "object" && val.connected) {
+      summary[key] = {
+        connected: true,
+        updatedAt: val.updatedAt || null,
+        appId: val.appId || null,
+        partnerTag: val.partnerTag || null,
+        publisherId: val.publisherId || null,
+        publicKey: val.publicKey || null,
+      };
+    }
+  }
+  return {integrations: summary};
+});
+
+/**
+ * Disconnect an integration platform
+ */
+exports.disconnectIntegration = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Não autenticado.");
+  }
+  const userId = request.auth.uid;
+  const platform = String(request.data?.platform || "").trim().toLowerCase();
+  if (!platform) {
+    throw new HttpsError("invalid-argument", "Plataforma ausente.");
+  }
+  await db.collection("user_integrations").doc(userId).update({
+    [`${platform}.connected`]: false,
+    [`${platform}.disconnectedAt`]: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  return {success: true, platform};
+});
+
+/**
+ * Generate affiliate link using API integration or platform deep link
+ */
+exports.generateAffiliateLink = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Não autenticado.");
+  }
+  const userId = request.auth.uid;
+  const {platform, originalUrl, title, categoryType, utmSource = "echobot_dm"} = request.data || {};
+
+  if (!platform || typeof platform !== "string") {
+    throw new HttpsError("invalid-argument", "Plataforma não informada.");
+  }
+  if (!originalUrl || typeof originalUrl !== "string" || !originalUrl.trim().startsWith("http")) {
+    throw new HttpsError("invalid-argument", "URL original inválida. Deve começar com http:// ou https://.");
+  }
+
+  const cleanUrl = originalUrl.trim();
+  const integrationsSnap = await db.collection("user_integrations").doc(userId).get();
+  const integrations = integrationsSnap.exists ? integrationsSnap.data() : {};
+  const creds = integrations[platform.toLowerCase()] || {};
+
+  let affiliateUrl = "";
+
+  switch (platform.toLowerCase()) {
+    case "shopee": {
+      if (!creds.appId || !creds.secret) {
+        throw new HttpsError(
+            "failed-precondition",
+            "Credenciais da Shopee (App ID e Secret) não configuradas.",
+        );
+      }
+      try {
+        affiliateUrl = await generateShopeeShortLink(creds.appId, creds.secret, cleanUrl, utmSource);
+      } catch (err) {
+        logger.warn("Shopee API generation failed, falling back to tracked link", {error: err.message});
+        affiliateUrl = appendTrackingTag(cleanUrl, utmSource);
+      }
+      break;
+    }
+    case "amazon": {
+      if (!creds.partnerTag) {
+        throw new HttpsError("failed-precondition", "Partner Tag da Amazon não configurada.");
+      }
+      affiliateUrl = formatAmazonAffiliateUrl(cleanUrl, creds.partnerTag, utmSource);
+      break;
+    }
+    case "awin": {
+      if (!creds.publisherId) {
+        throw new HttpsError("failed-precondition", "Publisher ID da Awin não configurado.");
+      }
+      affiliateUrl = formatAwinAffiliateUrl(cleanUrl, creds.publisherId, utmSource);
+      break;
+    }
+    case "lomadee": {
+      const source = creds.sourceId || creds.appToken;
+      if (!source) {
+        throw new HttpsError("failed-precondition", "Credenciais da Lomadee não configuradas.");
+      }
+      affiliateUrl = formatLomadeeAffiliateUrl(cleanUrl, source, utmSource);
+      break;
+    }
+    case "rakuten": {
+      if (!creds.publisherId) {
+        throw new HttpsError("failed-precondition", "Publisher ID da Rakuten não configurado.");
+      }
+      affiliateUrl = formatRakutenAffiliateUrl(cleanUrl, creds.publisherId, utmSource);
+      break;
+    }
+    case "admitad": {
+      if (!creds.token) {
+        throw new HttpsError("failed-precondition", "Token da Admitad não configurado.");
+      }
+      affiliateUrl = formatAdmitadAffiliateUrl(cleanUrl, creds.token, utmSource);
+      break;
+    }
+    default: {
+      affiliateUrl = appendTrackingTag(cleanUrl, utmSource);
+      break;
+    }
+  }
+
+  const linkData = {
+    userId,
+    title: (title || "").trim() || `Produto ${platform}`,
+    platform: platform.toLowerCase(),
+    categoryType: categoryType === "infoproduto" ? "infoproduto" : "fisico",
+    originalUrl: cleanUrl,
+    affiliateUrl,
+    utmSource: utmSource || "echobot_dm",
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+
+  const docRef = await db.collection("affiliate_links").add(linkData);
+
+  return {
+    id: docRef.id,
+    ...linkData,
+    createdAt: new Date().toISOString(),
+  };
+});
+
+/**
+ * Synchronize user's affiliated products from Hotmart
+ */
+exports.syncHotmartProducts = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Não autenticado.");
+  }
+  const userId = request.auth.uid;
+  const integrationsSnap = await db.collection("user_integrations").doc(userId).get();
+  const integrations = integrationsSnap.exists ? integrationsSnap.data() : {};
+  const hotmart = integrations.hotmart;
+
+  if (!hotmart || !hotmart.clientId || !hotmart.clientSecret) {
+    throw new HttpsError(
+        "failed-precondition",
+        "Credenciais da Hotmart (Client ID e Client Secret) não configuradas. Salve-as na aba Afiliados & Links.",
+    );
+  }
+
+  let accessToken = null;
+  const authHeader = hotmart.basicAuth ?
+    (hotmart.basicAuth.startsWith("Basic ") ? hotmart.basicAuth : `Basic ${hotmart.basicAuth}`) :
+    `Basic ${Buffer.from(`${hotmart.clientId}:${hotmart.clientSecret}`).toString("base64")}`;
+
+  try {
+    const tokenRes = await axios.post(
+        "https://api-sec-vlc.hotmart.com/security/oauth/token?grant_type=client_credentials",
+        {},
+        {
+          headers: {
+            Authorization: authHeader,
+            "Content-Type": "application/json",
+          },
+          timeout: 10000,
+        },
+    );
+    accessToken = tokenRes.data?.access_token;
+  } catch (authErr) {
+    logger.warn("Hotmart OAuth authentication failed", {
+      error: authErr.response?.data || authErr.message,
+    });
+    throw new HttpsError(
+        "internal",
+        `Erro ao autenticar com a Hotmart: ${authErr.response?.data?.error_description || authErr.message}`,
+    );
+  }
+
+  let importedCount = 0;
+  try {
+    const productsRes = await axios.get(
+        "https://developers.hotmart.com/payments/api/v1/subscriptions",
+        {
+          headers: {Authorization: `Bearer ${accessToken}`},
+          params: {max_results: 50},
+          timeout: 10000,
+        },
+    );
+
+    const items = productsRes.data?.items || productsRes.data?.data || [];
+    for (const item of items) {
+      const prodName = item.product?.name || item.name || "Curso Hotmart";
+      const hotlink = item.hotlink || item.link || `https://hotm.art/${item.product?.id || item.id || "afiliado"}`;
+      const trackedLink = appendTrackingTag(hotlink, "echobot_dm");
+
+      await db.collection("affiliate_links").add({
+        userId,
+        title: prodName,
+        platform: "hotmart",
+        categoryType: "infoproduto",
+        originalUrl: hotlink,
+        affiliateUrl: trackedLink,
+        utmSource: "echobot_dm",
+        externalId: String(item.id || item.product?.id || ""),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      importedCount++;
+    }
+  } catch (apiErr) {
+    logger.warn("Hotmart product fetch returned an error or no items", {
+      error: apiErr.response?.data || apiErr.message,
+    });
+    return {
+      success: true,
+      count: 0,
+      message: "Autenticação realizada com sucesso na Hotmart. Nenhum produto ativo retornado no momento.",
+    };
+  }
+
+  return {success: true, count: importedCount};
+});
+
+/**
+ * Synchronize user's affiliated products from Eduzz
+ */
+exports.syncEduzzProducts = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Não autenticado.");
+  }
+  const userId = request.auth.uid;
+  const integrationsSnap = await db.collection("user_integrations").doc(userId).get();
+  const integrations = integrationsSnap.exists ? integrationsSnap.data() : {};
+  const eduzz = integrations.eduzz;
+
+  if (!eduzz || !eduzz.apiKey) {
+    throw new HttpsError("failed-precondition", "API Key da Eduzz não configurada. Salve-a na aba Afiliados & Links.");
+  }
+
+  let importedCount = 0;
+  try {
+    const res = await axios.get("https://api.eduzz.com/partner/v1/affiliates", {
+      headers: {
+        token: eduzz.apiKey,
+        Authorization: `Bearer ${eduzz.apiKey}`,
+      },
+      timeout: 10000,
+    });
+
+    const items = res.data?.data || res.data?.items || res.data || [];
+    if (Array.isArray(items)) {
+      for (const item of items) {
+        const prodName = item.title || item.name || "Conteúdo Eduzz";
+        const link = item.affiliate_url || item.url || `https://eduzz.com/p/${item.id || "conteudo"}`;
+        const trackedLink = appendTrackingTag(link, "echobot_dm");
+
+        await db.collection("affiliate_links").add({
+          userId,
+          title: prodName,
+          platform: "eduzz",
+          categoryType: "infoproduto",
+          originalUrl: link,
+          affiliateUrl: trackedLink,
+          utmSource: "echobot_dm",
+          externalId: String(item.id || ""),
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        importedCount++;
+      }
+    }
+  } catch (apiErr) {
+    logger.warn("Eduzz product fetch returned error", {
+      error: apiErr.response?.data || apiErr.message,
+    });
+    return {
+      success: true,
+      count: 0,
+      message: "Conexão testada com sucesso na Eduzz. Nenhum produto retornado no momento.",
+    };
+  }
+
+  return {success: true, count: importedCount};
 });

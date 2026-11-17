@@ -14,6 +14,16 @@ service cloud.firestore {
       }
     }
 
+    match /user_integrations/{userId} {
+      allow read, write: if ownsUser(userId);
+    }
+
+    match /affiliate_links/{linkId} {
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
     match /privateUsers/{userId} {
       allow read, write: if false;
     }

@@ -3,7 +3,7 @@
   "description": "EchoBot Firebase Cloud Functions",
   "scripts": {
     "lint": "eslint .",
-    "test": "node --test test/campaignUtils.test.js test/webhookSecurity.test.js",
+    "test": "node --test test/campaignUtils.test.js test/webhookSecurity.test.js test/affiliateUtils.test.js",
     "test:rules": "node --test test/rules.test.js",
     "serve": "firebase emulators:start --only functions",
     "shell": "firebase functions:shell",
