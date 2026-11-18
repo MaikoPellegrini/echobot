@@ -4,12 +4,77 @@ function normalizeText(value) {
     "";
 }
 
-function campaignMatchesKeyword(comment, keyword, matchType = "partial") {
+/**
+ * Extracts a normalized, non-empty list of keywords from either
+ * an array of strings or a comma/semicolon/newline-separated string.
+ */
+function extractKeywords(input) {
+  if (Array.isArray(input)) {
+    return input
+        .map((k) => normalizeText(k))
+        .filter((k) => k.length > 0);
+  }
+  if (typeof input === "string") {
+    return input
+        .split(/[,;\n]+/)
+        .map((k) => normalizeText(k))
+        .filter((k) => k.length > 0);
+  }
+  return [];
+}
+
+/**
+ * Strips accents/diacritics for flexible Portuguese text matching (e.g. parabens == parabéns).
+ */
+function stripAccents(str) {
+  return typeof str === "string" ?
+    str.normalize("NFD").replace(/[\u0300-\u036f]/g, "") :
+    "";
+}
+
+/**
+ * Evaluates whether a comment matches any of the campaign's keywords.
+ * Supports both exact and partial matches across multiple keywords.
+ */
+function campaignMatchesKeyword(comment, keywordInput, matchType = "partial") {
   const normalizedComment = normalizeText(comment);
-  const normalizedKeyword = normalizeText(keyword);
-  if (!normalizedComment || !normalizedKeyword) return false;
-  if (matchType === "exact") return normalizedComment === normalizedKeyword;
-  return normalizedComment.includes(normalizedKeyword);
+  if (!normalizedComment) return false;
+
+  const keywords = extractKeywords(keywordInput);
+  if (!keywords || keywords.length === 0) return false;
+
+  const commentNoAccents = stripAccents(normalizedComment);
+
+  // Exact match:
+  // - Handles exact string equality
+  // - Also allows trailing/leading punctuation on comments (e.g. "parabens!" or "#parabéns")
+  // - Also matches with/without accents (e.g. "parabéns" matches "parabens")
+  if (matchType === "exact") {
+    const strippedComment = normalizedComment
+        .replace(/^[!?.#,\-_~*'"@()\s]+|[!?.#,\-_~*'"@()\s]+$/g, "")
+        .trim();
+    const strippedCommentNoAccents = stripAccents(strippedComment);
+
+    return keywords.some((kw) => {
+      const kwNoAccents = stripAccents(kw);
+      return (
+        kw === normalizedComment ||
+        (strippedComment && kw === strippedComment) ||
+        kwNoAccents === commentNoAccents ||
+        (strippedCommentNoAccents && kwNoAccents === strippedCommentNoAccents)
+      );
+    });
+  }
+
+  // Partial match:
+  // Returns true if ANY of the configured keywords is found in the comment.
+  // Also supports accent-insensitive matching (e.g. comment "parabéns pelo trabalho" matches "parabens").
+  return keywords.some((kw) => {
+    if (normalizedComment.includes(kw)) return true;
+    const kwNoAccents = stripAccents(kw);
+    if (kwNoAccents && commentNoAccents.includes(kwNoAccents)) return true;
+    return false;
+  });
 }
 
 function personalizeMessage(message, username) {
@@ -61,6 +126,7 @@ function resolveCampaignTargetType(campaign) {
 }
 
 module.exports = {
+  extractKeywords,
   campaignMatchesKeyword,
   personalizeMessage,
   shouldBindNextPost,

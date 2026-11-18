@@ -1,5 +1,5 @@
 // src/components/CampaignCard.js
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   doc,
   updateDoc,
@@ -24,6 +24,22 @@ export default function CampaignCard({ campaign, onEdit }) {
   const [toggling, setToggling] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showAllKeywords, setShowAllKeywords] = useState(false);
+
+  const keywordsList = useMemo(() => {
+    if (Array.isArray(campaign.keywords) && campaign.keywords.length > 0) {
+      return campaign.keywords;
+    }
+    return (campaign.keyword || '')
+      .split(/[,;\n]+/)
+      .map((k) => k.trim())
+      .filter(Boolean);
+  }, [campaign.keywords, campaign.keyword]);
+
+  const maxVisibleKeywords = 3;
+  const displayedKeywords = showAllKeywords
+    ? keywordsList
+    : keywordsList.slice(0, maxVisibleKeywords);
 
   const campaignRef = doc(db, 'users', user.uid, 'campaigns', campaign.id);
 
@@ -111,10 +127,25 @@ export default function CampaignCard({ campaign, onEdit }) {
           <div className="campaign-card-left">
             <h3 className="campaign-name">{campaign.name}</h3>
             <div className="campaign-meta">
-              <span className="keyword-badge">
-                <FaHashtag size={10} />
-                {campaign.keyword}
-              </span>
+              {displayedKeywords.map((kw, i) => (
+                <span key={i} className="keyword-badge">
+                  <FaHashtag size={10} />
+                  {kw}
+                </span>
+              ))}
+              {keywordsList.length > maxVisibleKeywords && (
+                <button
+                  type="button"
+                  className="keyword-more-pill"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowAllKeywords(!showAllKeywords);
+                  }}
+                  title={showAllKeywords ? 'Recolher palavras-chave' : `Ver todas (${keywordsList.length} palavras-chave)`}
+                >
+                  {showAllKeywords ? 'Recolher' : `+${keywordsList.length - maxVisibleKeywords}`}
+                </button>
+              )}
               {campaign.matchType && (
                 <span className="match-badge">
                   {campaign.matchType === 'exact' ? 'Exata' : 'Parcial'}

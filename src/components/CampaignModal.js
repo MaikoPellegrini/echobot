@@ -1,5 +1,5 @@
 // src/components/CampaignModal.js
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   collection,
   doc,
@@ -76,9 +76,13 @@ export default function CampaignModal({ campaign, onClose }) {
         initialTargetType = 'all_posts';
       }
 
+      const initialKeywords = Array.isArray(campaign.keywords) && campaign.keywords.length > 0
+        ? campaign.keywords.join(', ')
+        : (campaign.keyword || '');
+
       setForm({
         name: campaign.name || '',
-        keyword: campaign.keyword || '',
+        keyword: initialKeywords,
         targetType: initialTargetType,
         mediaId: campaign.mediaId || campaign.postId || '',
         matchType: campaign.matchType || 'partial',
@@ -259,6 +263,13 @@ export default function CampaignModal({ campaign, onClose }) {
     (item) => item.categoryType === 'infoproduto' || (!item.categoryType && !fisicoLinks.includes(item))
   );
 
+  const parsedKeywords = useMemo(() => {
+    return (form.keyword || '')
+      .split(/[,;\n]+/)
+      .map((k) => k.trim())
+      .filter(Boolean);
+  }, [form.keyword]);
+
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
     setForm((prev) => ({
@@ -273,10 +284,10 @@ export default function CampaignModal({ campaign, onClose }) {
   const validate = () => {
     const newErrors = {};
     if (!form.name.trim()) newErrors.name = 'Nome da campanha é obrigatório.';
-    if (!form.keyword.trim()) newErrors.keyword = 'Palavra-chave é obrigatória.';
+    if (parsedKeywords.length === 0) newErrors.keyword = 'Informe pelo menos uma palavra-chave.';
     if (!form.dmMessage.trim()) newErrors.dmMessage = 'Mensagem de Direct é obrigatória.';
     if (form.name.trim().length > 60) newErrors.name = 'Nome deve ter no máximo 60 caracteres.';
-    if (form.keyword.trim().length > 50) newErrors.keyword = 'Palavra-chave deve ter no máximo 50 caracteres.';
+    if (form.keyword.trim().length > 300) newErrors.keyword = 'Palavras-chave devem ter no máximo 300 caracteres no total.';
     if (form.dmMessage.trim().length > 1000) newErrors.dmMessage = 'Mensagem deve ter no máximo 1000 caracteres.';
     if (form.targetType === 'specific_post' && !form.mediaId.trim()) {
       newErrors.mediaId = 'Informe o ID da postagem específica.';
@@ -294,10 +305,12 @@ export default function CampaignModal({ campaign, onClose }) {
     try {
       const isSpecific = form.targetType === 'specific_post';
       const cleanMediaId = isSpecific ? form.mediaId.trim() : '';
+      const cleanKeywords = parsedKeywords.map((k) => k.toUpperCase());
 
       const payload = {
         name: form.name.trim(),
-        keyword: form.keyword.trim().toUpperCase(),
+        keyword: cleanKeywords.join(', '),
+        keywords: cleanKeywords,
         targetType: form.targetType,
         mediaId: cleanMediaId,
         postId: cleanMediaId, // Backward compatibility
@@ -400,21 +413,41 @@ export default function CampaignModal({ campaign, onClose }) {
               <div className="form-group flex-1">
                 <label className="form-label" htmlFor="keyword">
                   <FaHashtag size={12} />
-                  Palavra-chave Gatilho <span className="required">*</span>
+                  Palavras-chave Gatilho <span className="required">*</span>
                 </label>
                 <input
                   id="keyword"
                   name="keyword"
                   type="text"
                   className={`form-input ${errors.keyword ? 'error' : ''}`}
-                  placeholder="ex: INFO, LINK, QUERO"
+                  placeholder="ex: QUERO, LINK, INFO, PARABÉNS"
                   value={form.keyword}
                   onChange={handleChange}
-                  maxLength={50}
+                  maxLength={300}
                   aria-invalid={Boolean(errors.keyword)}
                   aria-describedby={errors.keyword ? 'campaign-keyword-error' : undefined}
                 />
                 {errors.keyword && <span className="form-error" id="campaign-keyword-error">{errors.keyword}</span>}
+                <span className="form-hint">
+                  Separe várias palavras-chave por vírgula (ex: QUERO, LINK, PARABÉNS). A automação responderá se o seguidor usar qualquer uma delas.
+                </span>
+
+                {/* Live chips preview */}
+                {parsedKeywords.length > 0 && (
+                  <div className="keywords-chips-preview">
+                    <span className="chips-preview-label">
+                      {parsedKeywords.length === 1 ? '1 palavra configurada:' : `${parsedKeywords.length} palavras configuradas:`}
+                    </span>
+                    <div className="chips-list">
+                      {parsedKeywords.map((kw, idx) => (
+                        <span key={idx} className="keyword-chip">
+                          <FaHashtag size={9} />
+                          {kw.toUpperCase()}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="form-group">
@@ -445,8 +478,8 @@ export default function CampaignModal({ campaign, onClose }) {
                 </div>
                 <span className="form-hint">
                   {form.matchType === 'partial'
-                    ? 'Detecta a palavra em qualquer parte da mensagem.'
-                    : 'A mensagem deve ser exatamente a palavra-chave.'}
+                    ? 'Detecta qualquer uma das palavras em qualquer parte do comentário.'
+                    : 'O comentário deve ser exatamente uma das palavras-chave configuradas.'}
                 </span>
               </div>
             </div>

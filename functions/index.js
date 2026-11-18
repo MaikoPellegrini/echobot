@@ -250,6 +250,7 @@ async function handleUnifiedWebhook(req, res) {
               .get();
 
           const mediaId = postId ? String(postId) : null;
+          const newlyBoundCampaignIds = new Set();
 
           // 1. Check if mediaId already has a specific campaign bound
           let hasSpecificCampaign = false;
@@ -302,7 +303,8 @@ async function handleUnifiedWebhook(req, res) {
                         boundAt: admin.firestore.FieldValue.serverTimestamp(),
                         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
                       });
-                      // Update in-memory data for immediate evaluation in this webhook invocation
+                      // Mark for immediate evaluation in this webhook execution
+                      newlyBoundCampaignIds.add(nextCampDoc.id);
                       nextCampData.mediaId = mediaId;
                       nextCampData.postId = mediaId;
                       nextCampData.targetType = "specific_post";
@@ -314,7 +316,15 @@ async function handleUnifiedWebhook(req, res) {
           }
 
           for (const campaignDoc of campaignsSnapshot.docs) {
-            const campaign = campaignDoc.data();
+            let campaign = campaignDoc.data();
+            if (newlyBoundCampaignIds.has(campaignDoc.id)) {
+              campaign = {
+                ...campaign,
+                mediaId: mediaId,
+                postId: mediaId,
+                targetType: "specific_post",
+              };
+            }
             const targetType = resolveCampaignTargetType(campaign);
 
             if (targetType === "specific_post") {
@@ -332,7 +342,8 @@ async function handleUnifiedWebhook(req, res) {
             }
             // targetType === "all_posts" matches any post
 
-            if (!campaignMatchesKeyword(commentText, campaign.keyword, campaign.matchType)) {
+            const keywordsToMatch = campaign.keywords || campaign.keyword;
+            if (!campaignMatchesKeyword(commentText, keywordsToMatch, campaign.matchType)) {
               continue;
             }
 

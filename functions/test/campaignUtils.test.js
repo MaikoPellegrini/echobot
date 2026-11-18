@@ -1,11 +1,68 @@
 const {test} = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  extractKeywords,
   campaignMatchesKeyword,
   personalizeMessage,
   shouldBindNextPost,
   resolveCampaignTargetType,
 } = require("../campaignUtils");
+
+test("extractKeywords handles arrays and comma/semicolon/newline separated strings", () => {
+  assert.deepEqual(
+      extractKeywords("PARABÉNS, PARABENS, LINDA, MEU, AMOR"),
+      ["parabéns", "parabens", "linda", "meu", "amor"],
+  );
+  assert.deepEqual(
+      extractKeywords(["QUERO", "link", " INFO "]),
+      ["quero", "link", "info"],
+  );
+  assert.deepEqual(
+      extractKeywords("primeiro; segundo\nterceiro, quarto"),
+      ["primeiro", "segundo", "terceiro", "quarto"],
+  );
+  assert.deepEqual(extractKeywords(""), []);
+  assert.deepEqual(extractKeywords("   ,  ;  "), []);
+});
+
+test("exact match with multiple keywords", () => {
+  const multiKeywords = "PARABÉNS, PARABENS, LINDA, MEU, AMOR";
+
+  // Matches any individual keyword from the list
+  assert.equal(campaignMatchesKeyword("PARABÉNS", multiKeywords, "exact"), true);
+  assert.equal(campaignMatchesKeyword("parabens", multiKeywords, "exact"), true);
+  assert.equal(campaignMatchesKeyword("linda", multiKeywords, "exact"), true);
+  assert.equal(campaignMatchesKeyword("amor", multiKeywords, "exact"), true);
+
+  // Matches with punctuation e.g. "Parabéns!" or "#linda"
+  assert.equal(campaignMatchesKeyword("Parabéns!", multiKeywords, "exact"), true);
+  assert.equal(campaignMatchesKeyword("#LINDA", multiKeywords, "exact"), true);
+
+  // Accent-insensitive fallback (parabens matches parabéns and vice-versa)
+  assert.equal(campaignMatchesKeyword("parabens", "PARABÉNS", "exact"), true);
+  assert.equal(campaignMatchesKeyword("parabéns", "PARABENS", "exact"), true);
+
+  // Non-matching comments
+  assert.equal(campaignMatchesKeyword("outro comentário qualquer", multiKeywords, "exact"), false);
+  assert.equal(campaignMatchesKeyword("quero link", multiKeywords, "exact"), false);
+});
+
+test("partial match with multiple keywords", () => {
+  const multiKeywords = "PARABÉNS, PARABENS, LINDA, MEU, AMOR";
+
+  assert.equal(campaignMatchesKeyword("Nossa você é muito linda parabéns!", multiKeywords, "partial"), true);
+  assert.equal(campaignMatchesKeyword("meu grande amigo", multiKeywords, "partial"), true);
+  assert.equal(campaignMatchesKeyword("Muito sucesso meu amor", multiKeywords, "partial"), true);
+  assert.equal(campaignMatchesKeyword("Bom dia pessoal", multiKeywords, "partial"), false);
+});
+
+test("multiple keywords passed as array", () => {
+  const arrayKeywords = ["QUERO", "EU QUERO", "LINK"];
+  assert.equal(campaignMatchesKeyword("quero", arrayKeywords, "exact"), true);
+  assert.equal(campaignMatchesKeyword("eu quero", arrayKeywords, "exact"), true);
+  assert.equal(campaignMatchesKeyword("por favor me manda o link", arrayKeywords, "partial"), true);
+  assert.equal(campaignMatchesKeyword("nada haver", arrayKeywords, "partial"), false);
+});
 
 test("exact match requires the complete normalized comment", () => {
   assert.equal(campaignMatchesKeyword(" LINK ", "link", "exact"), true);
